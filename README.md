@@ -1,6 +1,8 @@
 go-simperium
 ============
 
+To be clear this does not work yet...
+
 usage
 
 ```go
