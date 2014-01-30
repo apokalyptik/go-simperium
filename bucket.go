@@ -61,19 +61,19 @@ func (b *Bucket) read() string {
 	return <-b.recv
 }
 
-func (b *Bucket) onReady(f func(string)) {
+func (b *Bucket) OnReady(f func(string)) {
 	b.ready = f
 }
 
-func (b *Bucket) onNotify(f func(string, string, map[string] interface{})) {
+func (b *Bucket) OnNotify(f func(string, string, map[string] interface{})) {
 	b.notify = f
 }
 
-func (b *Bucket) onNotifyInit(f func(string, string, map[string] interface{})) {
+func (b *Bucket) OnNotifyInit(f func(string, string, map[string] interface{})) {
 	b.notifyInit = f
 }
 
-func (b *Bucket) onLocal(f func(string, string) map[string] interface{}) {
+func (b *Bucket) OnLocal(f func(string, string) map[string] interface{}) {
 	b.local = f
 }
 
