@@ -4,18 +4,18 @@ package simperium
 // granted not much effort has been spent on the issue yet... Requires further work. Auth failures on subsequent buckets after a successful
 // connection do not cause this problem (which is rooted in simperium hanging up on us)
 
-import(
-	"code.google.com/p/go.net/websocket"
-	"code.google.com/p/go-uuid/uuid"
+import (
 	"bytes"
-	"log"
+	"code.google.com/p/go-uuid/uuid"
+	"code.google.com/p/go.net/websocket"
 	"fmt"
-	"time"
-	"sync"
+	"io"
+	"log"
 	"regexp"
 	"strconv"
-	"io"
 	"strings"
+	"sync"
+	"time"
 )
 
 var channelMessage *regexp.Regexp = regexp.MustCompile("^\\d+:")
@@ -26,17 +26,17 @@ var channelMessage *regexp.Regexp = regexp.MustCompile("^\\d+:")
 // why no app/bucket/token is needed when creating this structure.
 type Client struct {
 	clientId string
-	socket *websocket.Conn
+	socket   *websocket.Conn
 
 	socketError chan error
-	socketRecv chan string
-	socketSend chan string
+	socketRecv  chan string
+	socketSend  chan string
 
-	buckets map[string] *Bucket
-	bucketId []*Bucket
+	buckets   map[string]*Bucket
+	bucketId  []*Bucket
 	recvChans []chan string
 	recvCount []func()
-	channels int
+	channels  int
 
 	lock sync.Mutex
 }
@@ -67,10 +67,10 @@ func (c *Client) Bucket(app, name, token string) (*Bucket, error) {
 	c.channels++
 
 	go func(channel int, bucket, client chan string) {
-		var prepend = fmt.Sprintf("%d:",channel)
+		var prepend = fmt.Sprintf("%d:", channel)
 		for {
 			m := <-bucket
-			client<- prepend + m
+			client <- prepend + m
 		}
 	}(channel, bucket.send, c.socketSend)
 	if err := bucket.auth(); err != nil {
@@ -86,11 +86,11 @@ func (c *Client) Bucket(app, name, token string) (*Bucket, error) {
 }
 
 func (c *Client) mindHeartbeats() {
-	tick := time.Tick(time.Duration(15*time.Second))
+	tick := time.Tick(time.Duration(15 * time.Second))
 	count := 0
 	for {
 		<-tick
-		c.socketSend<- fmt.Sprintf("h:%d",count)
+		c.socketSend <- fmt.Sprintf("h:%d", count)
 		count++
 	}
 }
@@ -101,7 +101,7 @@ func (c *Client) mindSocketWrites() {
 		_, err := c.socket.Write([]byte(b))
 		log.Printf(">>> %s", b)
 		if err != nil {
-			c.socketError<- err
+			c.socketError <- err
 			return
 		}
 	}
@@ -110,25 +110,25 @@ func (c *Client) mindSocketWrites() {
 func (c *Client) mindSocketReads() {
 	var buf bytes.Buffer
 	for {
-		chunk := make([]byte,1024)
-		_, err := c.socket.Read(chunk);
+		chunk := make([]byte, 1024)
+		_, err := c.socket.Read(chunk)
 		chunk = bytes.TrimRight(chunk, "\000")
 		if len(chunk) > 0 {
 			if _, buferr := buf.Write(chunk); buferr != nil {
 				log.Printf("simperium.Client.mindSocketReads buffer write error: %s", err.Error())
-				c.socketError<- buferr
+				c.socketError <- buferr
 				return
 			}
 		}
 		if buf.Len()%1024 != 0 {
-			c.socketRecv<-buf.String()
+			c.socketRecv <- buf.String()
 			log.Printf("<<< %s", buf.String())
 			buf.Truncate(0)
 		}
 		if err != nil {
 			if err != io.EOF {
 				log.Printf("simperium.Client.mindSocketReads read error: %s", err.Error())
-				c.socketError<- err
+				c.socketError <- err
 				return
 			}
 		}
@@ -136,7 +136,7 @@ func (c *Client) mindSocketReads() {
 }
 
 func (c *Client) sendChannel(channel int, m string) {
-	c.recvChans[channel]<- m
+	c.recvChans[channel] <- m
 }
 
 func (c *Client) handleSocketReads() {
@@ -145,22 +145,22 @@ func (c *Client) handleSocketReads() {
 	for {
 		m := <-c.socketRecv
 		switch {
-			case strings.HasPrefix(m, hb):
-				break;
-			case channelMessage.MatchString(m):
-				parts := strings.SplitN(m, ":", 2)
-				if channel, ok := chanCache[string(parts[0])]; ok {
-					c.recvCount[channel]()
-					go c.sendChannel(channel, parts[1])
-				} else {
-					channel, _ := strconv.Atoi(string(parts[0]))
-					chanCache[string(parts[0])] = channel
-					c.recvCount[channel]()
-					go c.sendChannel(channel, parts[1])
-				}
-				break;
-			default:
-				log.Printf("unknown socket read: %s", string(m))
+		case strings.HasPrefix(m, hb):
+			break
+		case channelMessage.MatchString(m):
+			parts := strings.SplitN(m, ":", 2)
+			if channel, ok := chanCache[string(parts[0])]; ok {
+				c.recvCount[channel]()
+				go c.sendChannel(channel, parts[1])
+			} else {
+				channel, _ := strconv.Atoi(string(parts[0]))
+				chanCache[string(parts[0])] = channel
+				c.recvCount[channel]()
+				go c.sendChannel(channel, parts[1])
+			}
+			break
+		default:
+			log.Printf("unknown socket read: %s", string(m))
 		}
 	}
 }
@@ -342,5 +342,3 @@ func initClient(client *Client) (*Client, error) {
 	return client, nil
 }
 */
-
-

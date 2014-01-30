@@ -8,11 +8,11 @@ package simperium
 
 // BUG(apokalyptik) Buckets do not yet send changes
 
-import(
+import (
 	"encoding/json"
-	"regexp"
-	"log"
 	"errors"
+	"log"
+	"regexp"
 	"sync"
 	"time"
 )
@@ -25,24 +25,24 @@ var authFail *regexp.Regexp = regexp.MustCompile("^auth:expired$")
 type ReadyFunc func(string)
 
 // The function signature for the OnNotify and OnNotifyInit callbacks
-type NotifyFunc func(string, string, map[string] interface{})
+type NotifyFunc func(string, string, map[string]interface{})
 
 // The function signature for the OnLocal callback
-type LocalFunc func(string, string) map[string] interface{}
+type LocalFunc func(string, string) map[string]interface{}
 
 type Bucket struct {
-	app string
-	name string
-	token string
+	app      string
+	name     string
+	token    string
 	clientId string
-	recv chan string
-	send chan string
+	recv     chan string
+	send     chan string
 	messages uint64
 
-	ready ReadyFunc
-	notify NotifyFunc
+	ready      ReadyFunc
+	notify     NotifyFunc
 	notifyInit NotifyFunc
-	local LocalFunc
+	local      LocalFunc
 
 	lock sync.Mutex
 }
@@ -78,52 +78,52 @@ func (b *Bucket) read() string {
 	return <-b.recv
 }
 
-// Specify which function to use as a callback to let you know that the startup 
+// Specify which function to use as a callback to let you know that the startup
 // phase of the bucket has finished and the Bucket structure is up, and syncing
 func (b *Bucket) OnReady(f ReadyFunc) {
 	b.ready = f
 }
 
-// Specify which function to use as a callback after the startup phase of the 
+// Specify which function to use as a callback after the startup phase of the
 // bucket to notify you of existing documents and their data
 func (b *Bucket) OnNotify(f NotifyFunc) {
 	b.notify = f
 }
 
-// Specify which function to use as a callback during the startup phase of the 
+// Specify which function to use as a callback during the startup phase of the
 // bucket to notify you of existing documents and their data
 func (b *Bucket) OnNotifyInit(f NotifyFunc) {
 	b.notifyInit = f
 }
 
-// Speficy which function to use as a callback for when the bucket needs to know 
+// Speficy which function to use as a callback for when the bucket needs to know
 // what data a document contains now
 func (b *Bucket) OnLocal(f LocalFunc) {
 	b.local = f
 }
 
-// Tell the bucket that you have new data for the document. The bucket will call 
+// Tell the bucket that you have new data for the document. The bucket will call
 // your OnLocal handler to retrieve the data
 func (b *Bucket) Update(documentId string) {
 }
 
 // Update or create the document in the bucket to contain the new data
-func (b *Bucket) UpdateWith(documentId string, data map[string] interface{}) {
+func (b *Bucket) UpdateWith(documentId string, data map[string]interface{}) {
 }
 
 func (b *Bucket) auth() error {
-	init, err := json.Marshal(map[string] interface{} {
-		"app_id": b.app,
-		"token": b.token,
-		"name": b.name,
-		"clientid": b.clientId,
-		"library": "github.com/apokalyptik/go-simperium",
+	init, err := json.Marshal(map[string]interface{}{
+		"app_id":          b.app,
+		"token":           b.token,
+		"name":            b.name,
+		"clientid":        b.clientId,
+		"library":         "github.com/apokalyptik/go-simperium",
 		"library_version": "1",
-		"api": 1 })
+		"api":             1})
 	if err != nil {
 		return err
 	}
-	b.send<- "init:" + string(init)
+	b.send <- "init:" + string(init)
 	time.Sleep(time.Second)
 	resp := b.read()
 	if authFail.MatchString(resp) {
