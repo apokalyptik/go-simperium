@@ -54,6 +54,7 @@ func (c *Client) Bucket(app, name, token string) (*Bucket, error) {
 		return bucket, nil
 	}
 	bucket := new(Bucket)
+	bucket.init()
 	bucket.app = app
 	bucket.name = name
 	bucket.token = token

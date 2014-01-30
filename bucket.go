@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"sync"
 	"time"
+	"github.com/apokalyptik/go-jsondiff"
 )
 
 var ErrorAuthFail error = errors.New("Authorization Failed")
@@ -43,6 +44,8 @@ type Bucket struct {
 	notify     NotifyFunc
 	notifyInit NotifyFunc
 	local      LocalFunc
+
+	jsd *jsondiff.JsonDiff
 
 	lock sync.Mutex
 }
@@ -109,6 +112,10 @@ func (b *Bucket) Update(documentId string) {
 
 // Update or create the document in the bucket to contain the new data
 func (b *Bucket) UpdateWith(documentId string, data map[string]interface{}) {
+}
+
+func (b *Bucket) init() {
+	b.jsd = jsondiff.New()
 }
 
 func (b *Bucket) auth() error {
