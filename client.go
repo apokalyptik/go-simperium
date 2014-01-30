@@ -1,7 +1,8 @@
 package simperium
 
-// TODO: auth failure on *first* bucket disconnects socket... which has been difficule to rectify... need to look further into handling
-// this particular error
+// BUG(apokalyptik) An auth failure on the *first* Bucket disconnects the Client socket... which has been a pain to get working so far
+// granted not much effort has been spent on the issue yet... Requires further work. Auth failures on subsequent buckets after a successful
+// connection do not cause this problem (which is rooted in simperium hanging up on us)
 
 import(
 	"code.google.com/p/go.net/websocket"
@@ -19,6 +20,10 @@ import(
 
 var channelMessage *regexp.Regexp = regexp.MustCompile("^\\d+:")
 
+// A client connection to simperium. One persistent websocket connection is maintained via this
+// parent structure. The child structures (Buckets) communicate through this to talk to simperium
+// via websocket channels. Each channel (and thus bucket) is authenticated individually which is
+// why no app/bucket/token is needed when creating this structure.
 type Client struct {
 	clientId string
 	socket *websocket.Conn
@@ -36,6 +41,8 @@ type Client struct {
 	lock sync.Mutex
 }
 
+// Instantiate a connection to a Simperium Bucket communicating through a new channel
+// on this clients existing websocket connection
 func (c *Client) Bucket(app, name, token string) (*Bucket, error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
