@@ -79,7 +79,7 @@ func (c *Client) Bucket(app, name, token string) (*Bucket, error) {
 }
 
 func (c *Client) mindHeartbeats() {
-	tick := time.Tick(time.Duration(1*time.Second))
+	tick := time.Tick(time.Duration(15*time.Second))
 	count := 0
 	for {
 		<-tick
