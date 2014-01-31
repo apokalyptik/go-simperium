@@ -175,7 +175,6 @@ func (b *Bucket) init() {
 }
 
 func (b *Bucket) index() {
-
 	data := "1"
 	offset := ""
 	since := ""
@@ -191,6 +190,9 @@ func (b *Bucket) index() {
 			} else {
 				for _, v := range resp.Index {
 					b.data[v.Id] = v
+					if b.notifyInit != nil {
+						go b.notifyInit(b.name, v.Id, v.Data)
+					}
 				}
 			}
 		} else {
@@ -208,6 +210,9 @@ func (b *Bucket) index() {
 
 func (b *Bucket) Start() {
 	b.index()
+	if b.ready != nil {
+		go b.ready(b.name)
+	}
 }
 
 func (b *Bucket) auth() error {
