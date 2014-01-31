@@ -9,6 +9,7 @@ package simperium
 // BUG(apokalyptik) Buckets do not yet send changes
 
 import (
+	"fmt"
 	"encoding/json"
 	"errors"
 	"log"
@@ -19,17 +20,43 @@ import (
 )
 
 var ErrorAuthFail error = errors.New("Authorization Failed")
+var BadServerResponse error = errors.New("Simperium gave an unexpected response")
 
 var authFail *regexp.Regexp = regexp.MustCompile("^auth:expired$")
 
+type bucketData map[string]interface{}
+
+type bucketItem struct {
+	Data bucketData `json:"d"`
+	Version int `json:"v"`
+	Id string `json:"id"`
+}
+
+type indexResponse struct {
+	Current string `json:"current"`
+	Index []bucketItem `json:"index"`
+	Mark string `json:"mark"`
+}
+
 // The function signature for the OnReady callback
+//
+// func Handler(bucket string) {...}
 type ReadyFunc func(string)
 
 // The function signature for the OnNotify and OnNotifyInit callbacks
+//
+// func Handler(bucket, documentId string, data map[string]interface{}) {...}
 type NotifyFunc func(string, string, map[string]interface{})
 
 // The function signature for the OnLocal callback
+//
+// func Handler(bucket, documentId string)  map[string]interface{} {...}
 type LocalFunc func(string, string) map[string]interface{}
+
+// The function signature for the OnError callback.
+//
+// func Handler(bucket string, err error) {...}
+type ErrorFunc func(string, error)
 
 type Bucket struct {
 	app      string
@@ -44,10 +71,32 @@ type Bucket struct {
 	notify     NotifyFunc
 	notifyInit NotifyFunc
 	local      LocalFunc
+	err        ErrorFunc
+
+	data map[string] bucketItem
+
+	debug bool
 
 	jsd *jsondiff.JsonDiff
 
 	lock sync.Mutex
+}
+
+func (b *Bucket) Debug(debug bool) {
+	b.debug = debug
+}
+
+func (b *Bucket) log(data... interface{}) {
+	if b.debug {
+		switch len(data) {
+			case 0:
+				return
+			case 1:
+				log.Printf(data[0].(string))
+			case 2:
+				log.Printf(data[0].(string), data[1:]...)
+		}
+	}
 }
 
 func (b *Bucket) newMessage() {
@@ -66,11 +115,11 @@ func (b *Bucket) drain() {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 	if b.messages < 1 {
-		log.Printf("No messages to drain: %d", b.messages)
+		b.log("No messages to drain: %d", b.messages)
 		return
 	}
 	for i := b.messages; b.messages > 0; i-- {
-		log.Printf("Draining messages... %d left...", i)
+		b.log("Draining messages... %d left...", i)
 		<-b.recv
 		b.messages--
 	}
@@ -105,6 +154,12 @@ func (b *Bucket) OnLocal(f LocalFunc) {
 	b.local = f
 }
 
+// Specify whch function to use as a callback for when an error is encountered with
+// bucket operations
+func (b *Bucket) OnError(f ErrorFunc) {
+	b.err = f
+}
+
 // Tell the bucket that you have new data for the document. The bucket will call
 // your OnLocal handler to retrieve the data
 func (b *Bucket) Update(documentId string) {
@@ -115,7 +170,44 @@ func (b *Bucket) UpdateWith(documentId string, data map[string]interface{}) {
 }
 
 func (b *Bucket) init() {
+	b.data = make(map[string] bucketItem)
 	b.jsd = jsondiff.New()
+}
+
+func (b *Bucket) index() {
+
+	data := "1"
+	offset := ""
+	since := ""
+	limit := "10"
+
+	for {
+		b.send <- fmt.Sprintf("i:%s:%s:%s:%s", data, offset, since, limit)
+		rdata := b.read()
+		resp := new(indexResponse)
+		if rdata[:2] == "i:" {
+			if err := json.Unmarshal([]byte(rdata[2:]), &resp); err != nil {
+				log.Fatal(err)
+			} else {
+				for _, v := range resp.Index {
+					b.data[v.Id] = v
+				}
+			}
+		} else {
+			// TODO: BadServerResponse
+		}
+		if resp.Mark == "" {
+			break
+		}
+		if resp.Mark == offset {
+			break
+		}
+		offset = resp.Mark
+	}
+}
+
+func (b *Bucket) Start() {
+	b.index()
 }
 
 func (b *Bucket) auth() error {
