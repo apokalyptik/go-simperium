@@ -46,15 +46,15 @@ func (c *Client) Debug(debug bool) {
 	c.debug = debug
 }
 
-func (c *Client) log(data... interface{}) {
+func (c *Client) log(data ...interface{}) {
 	if c.debug {
 		switch len(data) {
-			case 0:
-				return
-			case 1:
-				log.Printf(data[0].(string))
-			default:
-				log.Printf(data[0].(string), data[1:]...)
+		case 0:
+			return
+		case 1:
+			log.Printf(data[0].(string))
+		default:
+			log.Printf(data[0].(string), data[1:]...)
 		}
 	}
 }

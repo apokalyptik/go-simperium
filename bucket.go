@@ -9,14 +9,14 @@ package simperium
 // BUG(apokalyptik) Buckets do not yet send changes
 
 import (
-	"fmt"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/apokalyptik/go-jsondiff"
 	"log"
 	"regexp"
 	"sync"
 	"time"
-	"github.com/apokalyptik/go-jsondiff"
 )
 
 var ErrorAuthFail error = errors.New("Authorization Failed")
@@ -27,15 +27,15 @@ var authFail *regexp.Regexp = regexp.MustCompile("^auth:expired$")
 type bucketData map[string]interface{}
 
 type bucketItem struct {
-	Data bucketData `json:"d"`
-	Version int `json:"v"`
-	Id string `json:"id"`
+	Data    bucketData `json:"d"`
+	Version int        `json:"v"`
+	Id      string     `json:"id"`
 }
 
 type indexResponse struct {
-	Current string `json:"current"`
-	Index []bucketItem `json:"index"`
-	Mark string `json:"mark"`
+	Current string       `json:"current"`
+	Index   []bucketItem `json:"index"`
+	Mark    string       `json:"mark"`
 }
 
 // The function signature for the OnReady callback
@@ -59,42 +59,64 @@ type LocalFunc func(string, string) map[string]interface{}
 type ErrorFunc func(string, error)
 
 type Bucket struct {
-	app      string
-	name     string
-	token    string
-	clientId string
-	recv     chan string
-	send     chan string
-	messages uint64
+	app         string                // The application id
+	name        string                // The bucket name
+	token       string                // The user auth token
+	clientId    string                // The client ID
+	isReady     bool                  // Whether or not the client is "ready"
+	indexing    bool                  // Whether or not we are doing our index sync
+	indexed     bool                  // Whether or not we have completed our index sync
+	recv        chan string           // For recieving data from the client
+	recvIndex   chan string           // For internally separating out index responses from the stream
+	recvChange  chan string           // For internally separating out changeset notifications from the stream
+	send        chan string           // For sending commands through the client
+	messages    uint64                // The number of messages pending at the client for this bucket
+	ready       ReadyFunc             // Callback
+	notify      NotifyFunc            // Callback
+	notifyInit  NotifyFunc            // Callback
+	local       LocalFunc             // Callback
+	err         ErrorFunc             // Callback
+	data        map[string]bucketItem // Our index
+	debug       bool                  // Whether we're debugging or not
+	jsd         *jsondiff.JsonDiff    // Jsondiff
+	lock        sync.Mutex            // A mutex
+	processLock sync.Mutex
+}
 
-	ready      ReadyFunc
-	notify     NotifyFunc
-	notifyInit NotifyFunc
-	local      LocalFunc
-	err        ErrorFunc
+func (b *Bucket) handleRecv() {
+	for {
+		m := <-b.recv
+		if m[:2] == "i:" {
+			b.recvIndex <- m[2:]
+			continue
+		}
+		if m[:2] == "c:" {
+			b.recvChange <- m[2:]
+		}
+	}
+}
 
-	data map[string] bucketItem
-
-	debug bool
-
-	jsd *jsondiff.JsonDiff
-
-	lock sync.Mutex
+func (b *Bucket) handleChanges() {
+	for {
+		m := <-b.recvChange
+		b.log("got change: %s", m)
+		// TODO: things
+	}
 }
 
 func (b *Bucket) Debug(debug bool) {
 	b.debug = debug
 }
 
-func (b *Bucket) log(data... interface{}) {
+func (b *Bucket) log(data ...interface{}) {
 	if b.debug {
 		switch len(data) {
-			case 0:
-				return
-			case 1:
-				log.Printf(data[0].(string))
-			case 2:
-				log.Printf(data[0].(string), data[1:]...)
+		case 0:
+			return
+		case 1:
+			log.Printf(data[0].(string))
+		case 2:
+			log.Printf(data[0].(string), data[1:]...)
 		}
 	}
 }
@@ -170,11 +192,19 @@ func (b *Bucket) UpdateWith(documentId string, data map[string]interface{}) {
 }
 
 func (b *Bucket) init() {
-	b.data = make(map[string] bucketItem)
+	b.recvIndex = make(chan string, 1024)
+	b.recvChange = make(chan string, 1024)
+	b.data = make(map[string]bucketItem)
 	b.jsd = jsondiff.New()
 }
 
 func (b *Bucket) index() {
+	b.processLock.Lock()
+	defer b.processLock.Unlock()
+
+	b.indexed = false
+	b.indexing = true
+
 	data := "1"
 	offset := ""
 	since := ""
@@ -182,21 +212,17 @@ func (b *Bucket) index() {
 
 	for {
 		b.send <- fmt.Sprintf("i:%s:%s:%s:%s", data, offset, since, limit)
-		rdata := b.read()
+		rdata := <-b.recvIndex
 		resp := new(indexResponse)
-		if rdata[:2] == "i:" {
-			if err := json.Unmarshal([]byte(rdata[2:]), &resp); err != nil {
-				log.Fatal(err)
-			} else {
-				for _, v := range resp.Index {
-					b.data[v.Id] = v
-					if b.notifyInit != nil {
-						go b.notifyInit(b.name, v.Id, v.Data)
-					}
-				}
+		if err := json.Unmarshal([]byte(rdata), &resp); err != nil {
+			log.Printf(":(")
+			log.Fatal(err)
+		}
+		for _, v := range resp.Index {
+			b.data[v.Id] = v
+			if b.notifyInit != nil {
+				go b.notifyInit(b.name, v.Id, v.Data)
 			}
-		} else {
-			// TODO: BadServerResponse
 		}
 		if resp.Mark == "" {
 			break
@@ -205,7 +231,10 @@ func (b *Bucket) index() {
 			break
 		}
 		offset = resp.Mark
+		time.Sleep(time.Second)
 	}
+	b.indexing = false
+	b.indexed = true
 }
 
 func (b *Bucket) Start() {
@@ -213,6 +242,7 @@ func (b *Bucket) Start() {
 	if b.ready != nil {
 		go b.ready(b.name)
 	}
+	b.isReady = true
 }
 
 func (b *Bucket) auth() error {
@@ -228,10 +258,11 @@ func (b *Bucket) auth() error {
 		return err
 	}
 	b.send <- "init:" + string(init)
-	time.Sleep(time.Second)
 	resp := b.read()
 	if authFail.MatchString(resp) {
 		return ErrorAuthFail
 	}
+	go b.handleRecv()
+	go b.handleChanges()
 	return nil
 }
