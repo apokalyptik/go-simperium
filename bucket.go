@@ -59,28 +59,29 @@ type LocalFunc func(string, string) map[string]interface{}
 type ErrorFunc func(string, error)
 
 type Bucket struct {
-	app         string                // The application id
-	name        string                // The bucket name
-	token       string                // The user auth token
-	clientId    string                // The client ID
-	isReady     bool                  // Whether or not the client is "ready"
-	indexing    bool                  // Whether or not we are doing our index sync
-	indexed     bool                  // Whether or not we have completed our index sync
-	recv        chan string           // For recieving data from the client
-	recvIndex   chan string           // For internally separating out index responses from the stream
-	recvChange  chan string           // For internally separating out changeset notifications from the stream
-	send        chan string           // For sending commands through the client
-	messages    uint64                // The number of messages pending at the client for this bucket
-	ready       ReadyFunc             // Callback
-	notify      NotifyFunc            // Callback
-	notifyInit  NotifyFunc            // Callback
-	local       LocalFunc             // Callback
-	err         ErrorFunc             // Callback
-	data        map[string]bucketItem // Our index
-	debug       bool                  // Whether we're debugging or not
-	jsd         *jsondiff.JsonDiff    // Jsondiff
-	lock        sync.Mutex            // A mutex
-	processLock sync.Mutex
+	app            string                // The application id
+	name           string                // The bucket name
+	token          string                // The user auth token
+	clientId       string                // The client ID
+	isReady        bool                  // Whether or not the client is "ready"
+	indexing       bool                  // Whether or not we are doing our index sync
+	indexed        bool                  // Whether or not we have completed our index sync
+	recv           chan string           // For recieving data from the client
+	recvIndex      chan string           // For internally separating out index responses from the stream
+	recvChange     chan string           // For internally separating out changeset notifications from the stream
+	send           chan string           // For sending commands through the client
+	messages       uint64                // The number of messages pending at the client for this bucket
+	ready          ReadyFunc             // Callback
+	notify         NotifyFunc            // Callback
+	notifyInit     NotifyFunc            // Callback
+	local          LocalFunc             // Callback
+	err            ErrorFunc             // Callback
+	waitingChanges []string              // changes awaiting processing
+	data           map[string]bucketItem // Our index
+	debug          bool                  // Whether we're debugging or not
+	jsd            *jsondiff.JsonDiff    // Jsondiff
+	lock           sync.Mutex            // A mutex
+	processLock    sync.Mutex
 }
 
 func (b *Bucket) handleRecv() {
@@ -92,15 +93,36 @@ func (b *Bucket) handleRecv() {
 		}
 		if m[:2] == "c:" {
 			b.recvChange <- m[2:]
+			continue
 		}
+		log.Printf("Unhandled message sent to bucket: %s", m)
+	}
+}
+
+func (b *Bucket) handleIncomingChanges() {
+	for {
+		// Populate a queue so that we don't fill up the recieving channel and block while
+		// processing large indexes on startup for a busy bucket
+		b.waitingChanges = append(b.waitingChanges, <-b.recvChange)
 	}
 }
 
 func (b *Bucket) handleChanges() {
+	var m string
 	for {
-		m := <-b.recvChange
-		b.log("got change: %s", m)
-		// TODO: things
+		if false == b.isReady {
+			for {
+				time.Sleep(time.Duration(250 * time.Millisecond))
+				if b.isReady {
+					break
+				}
+			}
+		}
+		if len(b.waitingChanges) > 0 {
+			// Shift an element off the beginning of the slice (fifo)
+			m, b.waitingChanges = b.waitingChanges[0], b.waitingChanges[1:]
+			b.log("got change: %s", m)
+		}
 	}
 }
 
@@ -215,7 +237,6 @@ func (b *Bucket) index() {
 		rdata := <-b.recvIndex
 		resp := new(indexResponse)
 		if err := json.Unmarshal([]byte(rdata), &resp); err != nil {
-			log.Printf(":(")
 			log.Fatal(err)
 		}
 		for _, v := range resp.Index {
@@ -231,7 +252,6 @@ func (b *Bucket) index() {
 			break
 		}
 		offset = resp.Mark
-		time.Sleep(time.Second)
 	}
 	b.indexing = false
 	b.indexed = true
@@ -263,6 +283,7 @@ func (b *Bucket) auth() error {
 		return ErrorAuthFail
 	}
 	go b.handleRecv()
+	go b.handleIncomingChanges()
 	go b.handleChanges()
 	return nil
 }
