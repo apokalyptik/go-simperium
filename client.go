@@ -65,7 +65,7 @@ func (c *Client) Bucket(app, name, token string) (*Bucket, error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	if c.socket == nil {
-		c.connect()
+		c.Connect()
 	}
 	key := fmt.Sprintf("%s:%s:%s", name, token, token)
 	if bucket, ok := c.buckets[key]; ok {
@@ -109,20 +109,24 @@ func (c *Client) mindHeartbeats() {
 	count := 0
 	for {
 		<-tick
-		c.socketSend <- fmt.Sprintf("h:%d", count)
-		count++
+		if c.socket == nil {
+			continue
+		}
+		c.socketSend<- fmt.Sprintf("h:%d", count)
+		count += 2
 	}
 }
 
 func (c *Client) mindSocketWrites() {
 	for {
 		b := <-c.socketSend
-		_, err := c.socket.Write([]byte(b))
-		c.log(">>> %s", b)
+		err := websocket.Message.Send(c.socket, b)
 		if err != nil {
+			c.log("simperium.Client.mindSocketWrites websocket.Message.Send error: %s", err.Error())
 			c.socketError <- err
 			return
 		}
+		c.log(">>> %s", b)
 	}
 }
 
@@ -132,7 +136,7 @@ func (c *Client) mindSocketReads() {
 		err := websocket.Message.Receive(c.socket, &message)
 		if err != nil {
 			if err != io.EOF {
-				c.log("simperium.Client.mindSocketReads read error: %s", err.Error())
+				c.log("simperium.Client.mindSocketReads websocket.Message.Receive error: %s", err.Error())
 				c.socketError <- err
 				return
 			}
@@ -172,7 +176,7 @@ func (c *Client) handleSocketReads() {
 	}
 }
 
-func (c *Client) connect() error {
+func (c *Client) Connect() error {
 	c.clientId = uuid.NewUUID().String()
 	c.socketRecv = make(chan string)
 	c.socketSend = make(chan string)

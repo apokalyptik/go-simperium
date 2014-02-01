@@ -63,7 +63,7 @@ type Bucket struct {
 	name           string                // The bucket name
 	token          string                // The user auth token
 	clientId       string                // The client ID
-	isReady        bool                  // Whether or not the client is "ready"
+	isReady        sync.WaitGroup        // Whether or not the client is "ready"
 	indexing       bool                  // Whether or not we are doing our index sync
 	indexed        bool                  // Whether or not we have completed our index sync
 	recv           chan string           // For recieving data from the client
@@ -77,6 +77,7 @@ type Bucket struct {
 	local          LocalFunc             // Callback
 	err            ErrorFunc             // Callback
 	waitingChanges []string              // changes awaiting processing
+	changesLock    sync.Mutex
 	data           map[string]bucketItem // Our index
 	debug          bool                  // Whether we're debugging or not
 	jsd            *jsondiff.JsonDiff    // Jsondiff
@@ -87,6 +88,7 @@ type Bucket struct {
 func (b *Bucket) handleRecv() {
 	for {
 		m := <-b.recv
+		b.readMessage()
 		if m[:2] == "i:" {
 			b.recvIndex <- m[2:]
 			continue
@@ -99,30 +101,30 @@ func (b *Bucket) handleRecv() {
 	}
 }
 
+func (b *Bucket) handleChanges() {
+	var m string
+	b.isReady.Wait()
+	for {
+		if len(b.waitingChanges) > 0 {
+			b.changesLock.Lock()
+			// Shift an element off the beginning of the slice (fifo)
+			m, b.waitingChanges = b.waitingChanges[0], b.waitingChanges[1:]
+			b.changesLock.Unlock()
+			b.log("got change: %s", m)
+		} else {
+			time.Sleep(time.Duration(100*time.Millisecond))
+		}
+	}
+}
+
 func (b *Bucket) handleIncomingChanges() {
 	for {
 		// Populate a queue so that we don't fill up the recieving channel and block while
 		// processing large indexes on startup for a busy bucket
-		b.waitingChanges = append(b.waitingChanges, <-b.recvChange)
-	}
-}
-
-func (b *Bucket) handleChanges() {
-	var m string
-	for {
-		if false == b.isReady {
-			for {
-				time.Sleep(time.Duration(250 * time.Millisecond))
-				if b.isReady {
-					break
-				}
-			}
-		}
-		if len(b.waitingChanges) > 0 {
-			// Shift an element off the beginning of the slice (fifo)
-			m, b.waitingChanges = b.waitingChanges[0], b.waitingChanges[1:]
-			b.log("got change: %s", m)
-		}
+		c := <-b.recvChange
+		b.changesLock.Lock()
+		b.waitingChanges = append(b.waitingChanges, c)
+		b.changesLock.Unlock()
 	}
 }
 
@@ -214,6 +216,7 @@ func (b *Bucket) UpdateWith(documentId string, data map[string]interface{}) {
 }
 
 func (b *Bucket) init() {
+	b.isReady.Add(1)
 	b.recvIndex = make(chan string, 1024)
 	b.recvChange = make(chan string, 1024)
 	b.data = make(map[string]bucketItem)
@@ -230,7 +233,7 @@ func (b *Bucket) index() {
 	data := "1"
 	offset := ""
 	since := ""
-	limit := "10"
+	limit := "100"
 
 	for {
 		b.send <- fmt.Sprintf("i:%s:%s:%s:%s", data, offset, since, limit)
@@ -262,7 +265,7 @@ func (b *Bucket) Start() {
 	if b.ready != nil {
 		go b.ready(b.name)
 	}
-	b.isReady = true
+	b.isReady.Done()
 }
 
 func (b *Bucket) auth() error {
