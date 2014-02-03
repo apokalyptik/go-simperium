@@ -139,10 +139,17 @@ func (b *Bucket) handleChanges() {
 							b.updateDocument(change.Document, change.Resultrevision, n)
 						}
 					}
+					if b.notify != nil {
+						if v, ok := b.data[change.Document]; ok {
+							go b.notify(b.name, change.Document, v.Data)
+						} else {
+							go b.notify(b.name, change.Document, nil)
+						}
+					}
 				}
 			}
 		} else {
-			time.Sleep(time.Duration(100*time.Millisecond))
+			time.Sleep(time.Duration(10*time.Millisecond))
 		}
 	}
 }
