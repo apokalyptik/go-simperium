@@ -24,10 +24,8 @@ var BadServerResponse error = errors.New("Simperium gave an unexpected response"
 
 var authFail *regexp.Regexp = regexp.MustCompile("^auth:expired$")
 
-type bucketData map[string]interface{}
-
 type bucketItem struct {
-	Data    bucketData `json:"d"`
+	Data    map[string]interface{} `json:"d"`
 	Version int        `json:"v"`
 	Id      string     `json:"id"`
 }
@@ -101,6 +99,14 @@ func (b *Bucket) handleRecv() {
 	}
 }
 
+func (b *Bucket) updateDocument(id string, v int, n map[string]interface{}) {
+	if n == nil {
+		if _, ok := b.data[id]; ok == true {
+			delete(b.data, id)
+		}
+	}
+	b.data[id] = bucketItem{ Data: n, Version: v, Id: id }
+}
 func (b *Bucket) handleChanges() {
 	var m string
 	b.isReady.Wait()
@@ -116,10 +122,22 @@ func (b *Bucket) handleChanges() {
 				continue
 			} else {
 				for _, change := range changes {
-					if n, e := b.jsd.Apply(make(map[string]interface{}), change); e != nil {
-						log.Printf("Patching error: %s", err.Error())
+					_, ok := b.data[change.Document]
+
+					if true == ok {
+						n, e := b.jsd.Apply(b.data[change.Document].Data, change)
+						if e != nil {
+							log.Printf("Patching error: %s", err.Error())
+						} else {
+							b.updateDocument(change.Document, change.Resultrevision, n)
+						}
 					} else {
-						log.Printf("result: %#v", n)
+						n, e := b.jsd.Apply(nil, change)
+						if e != nil {
+							log.Printf("Patching error: %s", err.Error())
+						} else {
+							b.updateDocument(change.Document, change.Resultrevision, n)
+						}
 					}
 				}
 			}
