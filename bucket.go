@@ -106,11 +106,23 @@ func (b *Bucket) handleChanges() {
 	b.isReady.Wait()
 	for {
 		if len(b.waitingChanges) > 0 {
-			b.changesLock.Lock()
 			// Shift an element off the beginning of the slice (fifo)
+			b.changesLock.Lock()
 			m, b.waitingChanges = b.waitingChanges[0], b.waitingChanges[1:]
 			b.changesLock.Unlock()
-			b.log("got change: %s", m)
+			// The data is a json ilst of change objects...
+			if changes, err := jsondiff.Parse(m); err != nil {
+				log.Printf("Got invalid changeset from Simerperium Server: %s", err.Error())
+				continue
+			} else {
+				for _, change := range changes {
+					if n, e := b.jsd.Apply(make(map[string]interface{}), change); e != nil {
+						log.Printf("Patching error: %s", err.Error())
+					} else {
+						log.Printf("result: %#v", n)
+					}
+				}
+			}
 		} else {
 			time.Sleep(time.Duration(100*time.Millisecond))
 		}
