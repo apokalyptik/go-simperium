@@ -1,11 +1,5 @@
 package simperium
 
-// BUG(apokalyptik) Buckets do not yet setup an initial internal state
-
-// BUG(apokalyptik) Buckets do not yet maintain their internal state
-
-// BUG(apokalyptik) Buckets to not sync streamed changes
-
 // BUG(apokalyptik) Buckets do not yet send changes
 
 import (
@@ -74,6 +68,7 @@ type Bucket struct {
 	notifyInit     NotifyFunc            // Callback
 	local          LocalFunc             // Callback
 	err            ErrorFunc             // Callback
+	starting       ReadyFunc             // Callback
 	waitingChanges []string              // changes awaiting processing
 	changesLock    sync.Mutex
 	data           map[string]bucketItem // Our index
@@ -81,6 +76,8 @@ type Bucket struct {
 	jsd            *jsondiff.JsonDiff    // Jsondiff
 	lock           sync.Mutex            // A mutex
 	processLock    sync.Mutex
+	initialized  bool
+	valid bool
 }
 
 func (b *Bucket) handleRecv() {
@@ -107,6 +104,7 @@ func (b *Bucket) updateDocument(id string, v int, n map[string]interface{}) {
 	}
 	b.data[id] = bucketItem{ Data: n, Version: v, Id: id }
 }
+
 func (b *Bucket) handleChanges() {
 	var m string
 	b.isReady.Wait()
@@ -141,9 +139,9 @@ func (b *Bucket) handleChanges() {
 					}
 					if b.notify != nil {
 						if v, ok := b.data[change.Document]; ok {
-							go b.notify(b.name, change.Document, v.Data)
+							b.notify(b.name, change.Document, v.Data)
 						} else {
-							go b.notify(b.name, change.Document, nil)
+							b.notify(b.name, change.Document, nil)
 						}
 					}
 				}
@@ -211,6 +209,17 @@ func (b *Bucket) drain() {
 func (b *Bucket) read() string {
 	defer b.readMessage()
 	return <-b.recv
+}
+
+// Specify which function to use as a callback to let you know that the bucket
+// is beginning its startup phase. This can happen the first time Start() is
+// called or after a client reconnect in which case expect notify-init and
+// ready callbacks to come through notifying you of the buckets current contents
+// which will include and supercede anything existing. It's recommended that you
+// flush your application state for the bucket and rebuild it anew at this point
+// for the sake of consistency
+func (b *Bucket) OnStarting(f ReadyFunc) {
+	b.starting = f
 }
 
 // Specify which function to use as a callback to let you know that the startup
@@ -282,7 +291,7 @@ func (b *Bucket) index() {
 		for _, v := range resp.Index {
 			b.data[v.Id] = v
 			if b.notifyInit != nil {
-				go b.notifyInit(b.name, v.Id, v.Data)
+				b.notifyInit(b.name, v.Id, v.Data)
 			}
 		}
 		if resp.Mark == "" {
@@ -298,9 +307,12 @@ func (b *Bucket) index() {
 }
 
 func (b *Bucket) Start() {
+	if b.starting != nil {
+		b.starting(b.name)
+	}
 	b.index()
 	if b.ready != nil {
-		go b.ready(b.name)
+		b.ready(b.name)
 	}
 	b.isReady.Done()
 }
@@ -322,8 +334,25 @@ func (b *Bucket) auth() error {
 	if authFail.MatchString(resp) {
 		return ErrorAuthFail
 	}
-	go b.handleRecv()
-	go b.handleIncomingChanges()
-	go b.handleChanges()
+	if b.initialized == false {
+		go b.handleRecv()
+		go b.handleIncomingChanges()
+		go b.handleChanges()
+		b.initialized = true
+	}
 	return nil
 }
+
+func (b *Bucket) reconnect() {
+	var err error
+	for i:=0; i<5; i++ {
+		if err = b.auth(); err == nil {
+			b.isReady.Add(1)
+			b.Start()
+			return
+		}
+	}
+	b.log("b6")
+	log.Fatal("Could not reconnect to bucket: %s on channel %d error: %s", b.name, err.Error())
+}
+

@@ -1,8 +1,5 @@
 package simperium
 
-// BUG(apokalyptik) closing the connection, and then reopening it does not "reconnect" connected buckets. 
-// Further it does not cause a reindexing of said buckets
-
 import (
 	"code.google.com/p/go-uuid/uuid"
 	"code.google.com/p/go.net/websocket"
@@ -36,6 +33,10 @@ type Client struct {
 	channels  int
 	liveChannels int
 
+	connectedAt time.Time
+	lastReadAt time.Time
+	readTimeout time.Duration
+
 	connectedClient chan bool
 	initialized bool
 
@@ -48,6 +49,7 @@ type Client struct {
 
 func (c *Client) SetHeartbeat(dur time.Duration) {
 	c.heartbeat = dur
+	c.readTimeout = dur * 3
 }
 
 func (c *Client) SetDebug(debug bool) {
@@ -109,8 +111,25 @@ func (c *Client) Bucket(app, name, token string) (*Bucket, error) {
 		delete(c.buckets, key)
 		bucket.drain()
 		return nil, err
+	} else {
+		c.buckets[key] = bucket
 	}
 	return bucket, nil
+}
+
+func (c *Client) mindDisconnects() {
+	for {
+		if c.lastReadAt.After(c.connectedAt) {
+			if time.Since(c.lastReadAt) > c.readTimeout {
+				c.closeSocket()
+				if err := c.Connect(); err != nil {
+					<-time.After(time.Duration(50*time.Millisecond))
+				}
+				continue
+			}
+		}
+		<-time.After(c.heartbeat)
+	}
 }
 
 func (c *Client) mindHeartbeats() {
@@ -126,6 +145,9 @@ func (c *Client) mindHeartbeats() {
 }
 
 func (c *Client) closeSocket() {
+	if c.socket == nil {
+		return
+	}
 	c.socketLock.Lock()
 	defer c.socketLock.Unlock()
 	if c.socket != nil {
@@ -135,12 +157,16 @@ func (c *Client) closeSocket() {
 }
 
 func (c *Client) mindSocketWrites() {
+	// The write can panic
+	defer func() { recover() }()
 	for {
+		if c.socket == nil {
+			return
+		}
 		b := <-c.socketSend
 		err := websocket.Message.Send(c.socket, b)
 		if err != nil {
 			c.log("simperium.Client.mindSocketWrites websocket.Message.Send error: %s", err.Error())
-			c.closeSocket()
 			return
 		}
 		c.log(">>> %s", b)
@@ -148,12 +174,17 @@ func (c *Client) mindSocketWrites() {
 }
 
 func (c *Client) mindSocketReads() {
+	// The read can panic
+	defer func() { recover() }()
 	var message string
 	for {
+		if c.socket == nil {
+			return
+		}
 		err := websocket.Message.Receive(c.socket, &message)
+		c.lastReadAt = time.Now()
 		if err != nil {
 			c.log("simperium.Client.mindSocketWrites websocket.Message.Send error: %s", err.Error())
-			c.closeSocket()
 			return
 		}
 		c.log("<<< %s", message)
@@ -202,12 +233,14 @@ func (c *Client) handleSocketReads() {
 func (c *Client) Connect() error {
 	c.clientId = uuid.NewUUID().String()
 	if false == c.initialized {
+		c.SetHeartbeat(time.Second)
 		c.socketRecv = make(chan string)
 		c.socketSend = make(chan string)
 		c.recvChans = make(map[int]chan string)
 		c.recvCount = make(map[int]func())
 		c.socketError = make(chan error)
 		c.connectedClient = make(chan bool)
+		c.buckets = make(map[string]*Bucket)
 	}
 	socket, err := websocket.Dial(
 		"wss://api.simperium.com:443/sock/websocket",
@@ -217,13 +250,18 @@ func (c *Client) Connect() error {
 		return err
 	}
 	c.socket = socket
+	c.connectedAt = time.Now()
 	if false == c.initialized {
 		go c.mindSocketReadWrite()
 		go c.handleSocketReads()
 		go c.mindHeartbeats()
+		go c.mindDisconnects()
 		c.initialized = true
 	} else {
 		c.connectedClient<- true // Wake reader and writer again
+		for _, bucket := range c.buckets {
+			bucket.reconnect()
+		}
 	}
 	return nil
 }
