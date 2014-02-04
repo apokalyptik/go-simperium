@@ -161,7 +161,7 @@ func (c *Client) mindSocketReads() {
 	}
 }
 
-func (c *Client) mindWockerReadWrite() {
+func (c *Client) mindSocketReadWrite() {
 	for {
 		go c.mindSocketWrites()
 		go c.mindSocketReads()
@@ -218,7 +218,7 @@ func (c *Client) Connect() error {
 	}
 	c.socket = socket
 	if false == c.initialized {
-		go c.mindWockerReadWrite()
+		go c.mindSocketReadWrite()
 		go c.handleSocketReads()
 		go c.mindHeartbeats()
 		c.initialized = true
