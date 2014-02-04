@@ -1,14 +1,12 @@
 package simperium
 
-// BUG(apokalyptik) An auth failure on the *first* Bucket disconnects the Client socket... which has been a pain to get working so far
-// granted not much effort has been spent on the issue yet... Requires further work. Auth failures on subsequent buckets after a successful
-// connection do not cause this problem (which is rooted in simperium hanging up on us)
+// BUG(apokalyptik) closing the connection, and then reopening it does not "reconnect" connected buckets. 
+// Further it does not cause a reindexing of said buckets
 
 import (
 	"code.google.com/p/go-uuid/uuid"
 	"code.google.com/p/go.net/websocket"
 	"fmt"
-	"io"
 	"log"
 	"regexp"
 	"strconv"
@@ -33,16 +31,26 @@ type Client struct {
 
 	buckets   map[string]*Bucket
 	bucketId  []*Bucket
-	recvChans []chan string
-	recvCount []func()
+	recvChans map[int]chan string
+	recvCount map[int]func()
 	channels  int
+	liveChannels int
 
+	connectedClient chan bool
+	initialized bool
+
+	heartbeat time.Duration
 	debug bool
 
+	socketLock sync.Mutex
 	lock sync.Mutex
 }
 
-func (c *Client) Debug(debug bool) {
+func (c *Client) SetHeartbeat(dur time.Duration) {
+	c.heartbeat = dur
+}
+
+func (c *Client) SetDebug(debug bool) {
 	c.debug = debug
 }
 
@@ -81,9 +89,10 @@ func (c *Client) Bucket(app, name, token string) (*Bucket, error) {
 	bucket.clientId = c.clientId
 
 	channel := c.channels
-	c.recvChans = append(c.recvChans, bucket.recv)
-	c.recvCount = append(c.recvCount, bucket.newMessage)
+	c.recvChans[channel] = bucket.recv
+	c.recvCount[channel] = bucket.newMessage
 	c.channels++
+	c.liveChannels++
 
 	go func(channel int, bucket, client chan string) {
 		var prepend = fmt.Sprintf("%d:", channel)
@@ -93,10 +102,10 @@ func (c *Client) Bucket(app, name, token string) (*Bucket, error) {
 		}
 	}(channel, bucket.send, c.socketSend)
 	if err := bucket.auth(); err != nil {
-		//TODO: cleanup
-		//channel--
-		//c.recvChans = c.recvChans[:len(c.recvChans)-1]
-		//c.recvCount = c.recvCount[:len(c.recvCount)-1]
+		c.liveChannels--
+		if c.liveChannels == 0 {
+			c.closeSocket()
+		}
 		delete(c.buckets, key)
 		bucket.drain()
 		return nil, err
@@ -105,15 +114,23 @@ func (c *Client) Bucket(app, name, token string) (*Bucket, error) {
 }
 
 func (c *Client) mindHeartbeats() {
-	tick := time.Tick(time.Duration(15 * time.Second))
 	count := 0
 	for {
-		<-tick
+		<-time.After(c.heartbeat)
 		if c.socket == nil {
 			continue
 		}
 		c.socketSend<- fmt.Sprintf("h:%d", count)
 		count += 2
+	}
+}
+
+func (c *Client) closeSocket() {
+	c.socketLock.Lock()
+	defer c.socketLock.Unlock()
+	if c.socket != nil {
+		c.socket.Close()
+		c.socket = nil
 	}
 }
 
@@ -123,7 +140,7 @@ func (c *Client) mindSocketWrites() {
 		err := websocket.Message.Send(c.socket, b)
 		if err != nil {
 			c.log("simperium.Client.mindSocketWrites websocket.Message.Send error: %s", err.Error())
-			c.socketError <- err
+			c.closeSocket()
 			return
 		}
 		c.log(">>> %s", b)
@@ -135,14 +152,20 @@ func (c *Client) mindSocketReads() {
 	for {
 		err := websocket.Message.Receive(c.socket, &message)
 		if err != nil {
-			if err != io.EOF {
-				c.log("simperium.Client.mindSocketReads websocket.Message.Receive error: %s", err.Error())
-				c.socketError <- err
-				return
-			}
+			c.log("simperium.Client.mindSocketWrites websocket.Message.Send error: %s", err.Error())
+			c.closeSocket()
+			return
 		}
 		c.log("<<< %s", message)
 		c.socketRecv <- message
+	}
+}
+
+func (c *Client) mindWockerReadWrite() {
+	for {
+		go c.mindSocketWrites()
+		go c.mindSocketReads()
+		<-c.connectedClient
 	}
 }
 
@@ -178,10 +201,14 @@ func (c *Client) handleSocketReads() {
 
 func (c *Client) Connect() error {
 	c.clientId = uuid.NewUUID().String()
-	c.socketRecv = make(chan string)
-	c.socketSend = make(chan string)
-	c.recvChans = make([]chan string, 0)
-	c.socketError = make(chan error)
+	if false == c.initialized {
+		c.socketRecv = make(chan string)
+		c.socketSend = make(chan string)
+		c.recvChans = make(map[int]chan string)
+		c.recvCount = make(map[int]func())
+		c.socketError = make(chan error)
+		c.connectedClient = make(chan bool)
+	}
 	socket, err := websocket.Dial(
 		"wss://api.simperium.com:443/sock/websocket",
 		"",
@@ -190,9 +217,13 @@ func (c *Client) Connect() error {
 		return err
 	}
 	c.socket = socket
-	go c.mindSocketReads()
-	go c.handleSocketReads()
-	go c.mindSocketWrites()
-	go c.mindHeartbeats()
+	if false == c.initialized {
+		go c.mindWockerReadWrite()
+		go c.handleSocketReads()
+		go c.mindHeartbeats()
+		c.initialized = true
+	} else {
+		c.connectedClient<- true // Wake reader and writer again
+	}
 	return nil
 }
