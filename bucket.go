@@ -20,8 +20,8 @@ var authFail *regexp.Regexp = regexp.MustCompile("^auth:expired$")
 
 type bucketItem struct {
 	Data    map[string]interface{} `json:"d"`
-	Version int        `json:"v"`
-	Id      string     `json:"id"`
+	Version int                    `json:"v"`
+	Id      string                 `json:"id"`
 }
 
 type indexResponse struct {
@@ -51,33 +51,33 @@ type LocalFunc func(string, string) map[string]interface{}
 type ErrorFunc func(string, error)
 
 type Bucket struct {
-	app            string                // The application id
-	name           string                // The bucket name
-	token          string                // The user auth token
-	clientId       string                // The client ID
-	isReady        sync.WaitGroup        // Whether or not the client is "ready"
-	indexing       bool                  // Whether or not we are doing our index sync
-	indexed        bool                  // Whether or not we have completed our index sync
-	recv           chan string           // For recieving data from the client
-	recvIndex      chan string           // For internally separating out index responses from the stream
-	recvChange     chan string           // For internally separating out changeset notifications from the stream
-	send           chan string           // For sending commands through the client
-	messages       uint64                // The number of messages pending at the client for this bucket
-	ready          ReadyFunc             // Callback
-	notify         NotifyFunc            // Callback
-	notifyInit     NotifyFunc            // Callback
-	local          LocalFunc             // Callback
-	err            ErrorFunc             // Callback
-	starting       ReadyFunc             // Callback
-	waitingChanges []string              // changes awaiting processing
+	app            string         // The application id
+	name           string         // The bucket name
+	token          string         // The user auth token
+	clientId       string         // The client ID
+	isReady        sync.WaitGroup // Whether or not the client is "ready"
+	indexing       bool           // Whether or not we are doing our index sync
+	indexed        bool           // Whether or not we have completed our index sync
+	recv           chan string    // For recieving data from the client
+	recvIndex      chan string    // For internally separating out index responses from the stream
+	recvChange     chan string    // For internally separating out changeset notifications from the stream
+	send           chan string    // For sending commands through the client
+	messages       uint64         // The number of messages pending at the client for this bucket
+	ready          ReadyFunc      // Callback
+	notify         NotifyFunc     // Callback
+	notifyInit     NotifyFunc     // Callback
+	local          LocalFunc      // Callback
+	err            ErrorFunc      // Callback
+	starting       ReadyFunc      // Callback
+	waitingChanges []string       // changes awaiting processing
 	changesLock    sync.Mutex
 	data           map[string]bucketItem // Our index
 	debug          bool                  // Whether we're debugging or not
 	jsd            *jsondiff.JsonDiff    // Jsondiff
 	lock           sync.Mutex            // A mutex
 	processLock    sync.Mutex
-	initialized  bool
-	valid bool
+	initialized    bool
+	valid          bool
 }
 
 func (b *Bucket) handleRecv() {
@@ -102,7 +102,7 @@ func (b *Bucket) updateDocument(id string, v int, n map[string]interface{}) {
 			delete(b.data, id)
 		}
 	}
-	b.data[id] = bucketItem{ Data: n, Version: v, Id: id }
+	b.data[id] = bucketItem{Data: n, Version: v, Id: id}
 }
 
 func (b *Bucket) handleChanges() {
@@ -147,7 +147,7 @@ func (b *Bucket) handleChanges() {
 				}
 			}
 		} else {
-			time.Sleep(time.Duration(10*time.Millisecond))
+			time.Sleep(time.Duration(10 * time.Millisecond))
 		}
 	}
 }
@@ -345,7 +345,7 @@ func (b *Bucket) auth() error {
 
 func (b *Bucket) reconnect() {
 	var err error
-	for i:=0; i<5; i++ {
+	for i := 0; i < 5; i++ {
 		if err = b.auth(); err == nil {
 			b.isReady.Add(1)
 			b.Start()
@@ -355,4 +355,3 @@ func (b *Bucket) reconnect() {
 	b.log("b6")
 	log.Fatal("Could not reconnect to bucket: %s on channel %d error: %s", b.name, err.Error())
 }
-

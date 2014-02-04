@@ -26,25 +26,25 @@ type Client struct {
 	socketRecv  chan string
 	socketSend  chan string
 
-	buckets   map[string]*Bucket
-	bucketId  []*Bucket
-	recvChans map[int]chan string
-	recvCount map[int]func()
-	channels  int
+	buckets      map[string]*Bucket
+	bucketId     []*Bucket
+	recvChans    map[int]chan string
+	recvCount    map[int]func()
+	channels     int
 	liveChannels int
 
 	connectedAt time.Time
-	lastReadAt time.Time
+	lastReadAt  time.Time
 	readTimeout time.Duration
 
 	connectedClient chan bool
-	initialized bool
+	initialized     bool
 
 	heartbeat time.Duration
-	debug bool
+	debug     bool
 
 	socketLock sync.Mutex
-	lock sync.Mutex
+	lock       sync.Mutex
 }
 
 func (c *Client) SetHeartbeat(dur time.Duration) {
@@ -123,7 +123,7 @@ func (c *Client) mindDisconnects() {
 			if time.Since(c.lastReadAt) > c.readTimeout {
 				c.closeSocket()
 				if err := c.Connect(); err != nil {
-					<-time.After(time.Duration(50*time.Millisecond))
+					<-time.After(time.Duration(50 * time.Millisecond))
 				}
 				continue
 			}
@@ -139,7 +139,7 @@ func (c *Client) mindHeartbeats() {
 		if c.socket == nil {
 			continue
 		}
-		c.socketSend<- fmt.Sprintf("h:%d", count)
+		c.socketSend <- fmt.Sprintf("h:%d", count)
 		count += 2
 	}
 }
@@ -258,7 +258,7 @@ func (c *Client) Connect() error {
 		go c.mindDisconnects()
 		c.initialized = true
 	} else {
-		c.connectedClient<- true // Wake reader and writer again
+		c.connectedClient <- true // Wake reader and writer again
 		for _, bucket := range c.buckets {
 			bucket.reconnect()
 		}
