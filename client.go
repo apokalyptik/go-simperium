@@ -158,18 +158,22 @@ func (c *Client) closeSocket() {
 
 func (c *Client) mindSocketWrites() {
 	// The write can panic
+	// BUG(apokalyptik) We lose a write in this recover
+	var message string
 	defer func() { recover() }()
 	for {
 		if c.socket == nil {
 			return
 		}
-		b := <-c.socketSend
-		err := websocket.Message.Send(c.socket, b)
+		message = ""
+		message = <-c.socketSend
+		err := websocket.Message.Send(c.socket, message)
 		if err != nil {
+			// BUG(apokalyptik) we lose a write in this error trap
 			c.log("simperium.Client.mindSocketWrites websocket.Message.Send error: %s", err.Error())
 			return
 		}
-		c.log(">>> %s", b)
+		c.log(">>> %s", message)
 	}
 }
 
