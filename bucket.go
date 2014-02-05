@@ -1,6 +1,8 @@
 package simperium
 
-// BUG(apokalyptik) on reconnect it would be better to list all changes since our last known change and process them appropriately
+// BUG(apokalyptik) Bucket -- On reconnect it would be better to list all changes since our last known change and process them appropriately
+
+// BUG(apokalyptik) Bucket -- Need to process options messages which are sent after successful authentication
 
 import (
 	"code.google.com/p/go-uuid/uuid"
