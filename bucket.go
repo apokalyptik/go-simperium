@@ -1,7 +1,6 @@
 package simperium
 
 // BUG(apokalyptik) on reconnect it would be better to list all changes since our last known change and process them appropriately
-// BUG(apokalyptik) Buckets do not yet send changes
 
 import (
 	"code.google.com/p/go-uuid/uuid"
