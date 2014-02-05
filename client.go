@@ -262,7 +262,9 @@ func (c *Client) handleSocketReads() {
 func (c *Client) Connect() error {
 	c.clientId = uuid.New()
 	if false == c.initialized {
-		c.SetHeartbeat(time.Second)
+		if 0 == c.heartbeat {
+			c.SetHeartbeat(time.Second)
+		}
 		c.socketRecv = make(chan string)
 		c.socketSend = make(chan string)
 		c.recvChans = make(map[int]chan string)
