@@ -282,7 +282,7 @@ func (b *Bucket) Update(documentId string, data map[string]interface{}) {
 		diff.Document = documentId
 		diff.ClientId = b.clientId
 		diff.ChangesetId = uuid.New()
-		s, e := diff.String()
+		s, _ := diff.String()
 		b.send<- fmt.Sprintf("c:%s", s)
 	}
 }
