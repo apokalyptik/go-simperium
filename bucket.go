@@ -4,6 +4,7 @@ package simperium
 // BUG(apokalyptik) Buckets do not yet send changes
 
 import (
+	"code.google.com/p/go-uuid/uuid"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,10 +42,12 @@ type ReadyFunc func(string)
 // func Handler(bucket, documentId string, data map[string]interface{}) {...}
 type NotifyFunc func(string, string, map[string]interface{})
 
+/*
 // The function signature for the OnLocal callback
 //
 // func Handler(bucket, documentId string)  map[string]interface{} {...}
 type LocalFunc func(string, string) map[string]interface{}
+*/
 
 // The function signature for the OnError callback.
 //
@@ -67,7 +70,7 @@ type Bucket struct {
 	ready          ReadyFunc      // Callback
 	notify         NotifyFunc     // Callback
 	notifyInit     NotifyFunc     // Callback
-	local          LocalFunc      // Callback
+//	local          LocalFunc      // Callback
 	err            ErrorFunc      // Callback
 	starting       ReadyFunc      // Callback
 	waitingChanges []string       // changes awaiting processing
@@ -164,7 +167,7 @@ func (b *Bucket) handleIncomingChanges() {
 	}
 }
 
-func (b *Bucket) Debug(debug bool) {
+func (b *Bucket) SetDebug(debug bool) {
 	b.debug = debug
 }
 
@@ -241,11 +244,13 @@ func (b *Bucket) OnNotifyInit(f NotifyFunc) {
 	b.notifyInit = f
 }
 
+/*
 // Speficy which function to use as a callback for when the bucket needs to know
 // what data a document contains now
 func (b *Bucket) OnLocal(f LocalFunc) {
 	b.local = f
 }
+*/
 
 // Specify whch function to use as a callback for when an error is encountered with
 // bucket operations
@@ -253,13 +258,34 @@ func (b *Bucket) OnError(f ErrorFunc) {
 	b.err = f
 }
 
+/*
 // Tell the bucket that you have new data for the document. The bucket will call
 // your OnLocal handler to retrieve the data
 func (b *Bucket) Update(documentId string) {
 }
+*/
 
 // Update or create the document in the bucket to contain the new data
-func (b *Bucket) UpdateWith(documentId string, data map[string]interface{}) {
+func (b *Bucket) Update(documentId string, data map[string]interface{}) {
+	var diff *jsondiff.DocumentChange
+	var from bucketItem
+	var ok bool
+	var err error
+	from, ok = b.data[documentId]
+	if ok {
+		diff, err = b.jsd.Diff(from.Data, data)
+	} else {
+		diff, err = b.jsd.Diff(nil, data)
+	}
+	if err != nil {
+		b.log("simperium.Bucket.UpdateWith.jsd.Diff error: %s", err.Error())
+	} else {
+		diff.Document = documentId
+		diff.ClientId = b.clientId
+		diff.ChangesetId = uuid.New()
+		s, e := diff.String()
+		b.send<- fmt.Sprintf("c:%s", s)
+	}
 }
 
 func (b *Bucket) init() {
