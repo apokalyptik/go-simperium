@@ -33,6 +33,7 @@ type Client struct {
 	channels     int
 	liveChannels int
 
+	writeQueue []string
 	connectedAt time.Time
 	lastReadAt  time.Time
 	readTimeout time.Duration
@@ -157,10 +158,31 @@ func (c *Client) closeSocket() {
 }
 
 func (c *Client) mindSocketWrites() {
-	// The write can panic
-	// BUG(apokalyptik) We lose a write in this recover
 	var message string
-	defer func() { recover() }()
+
+	// The write can panic
+	defer func() {
+		// BUG(apokalyptik) We lose a write in this recover. Need to see if we can get a message into c.writeQueue
+		// from here
+		recover()
+	}()
+
+	if len(c.writeQueue) > 0 {
+		// Upon starting... Check whether we have pending writes in our emergency queue
+		// If so make that queue local, and replace it with an empty queue, and then spawn
+		// a goroutine to feed the now local queue entries back into the send channel.
+		// No lock is necessary here because the only accesses to this queue come later in
+		// this same function and there is only one instance of this function running for
+		// this client globally
+		localQueue := c.writeQueue
+		c.writeQueue = make([]string,0)
+		go func(c *Client, queue []string) {
+			for _, message := range queue {
+				c.socketSend<- message
+			}
+		}(c, localQueue)
+	}
+
 	for {
 		if c.socket == nil {
 			return
@@ -169,7 +191,10 @@ func (c *Client) mindSocketWrites() {
 		message = <-c.socketSend
 		err := websocket.Message.Send(c.socket, message)
 		if err != nil {
-			// BUG(apokalyptik) we lose a write in this error trap
+			// If we got an error writing this message, then place it in the emergency message queue before
+			// exiting.  This will ensure that a message that would be lost by "returning" here will be
+			// picked up and re-attempted upon entry to this function before the recieve loop
+			c.writeQueue = append(c.writeQueue, message)
 			c.log("simperium.Client.mindSocketWrites websocket.Message.Send error: %s", err.Error())
 			return
 		}
@@ -245,6 +270,7 @@ func (c *Client) Connect() error {
 		c.socketError = make(chan error)
 		c.connectedClient = make(chan bool)
 		c.buckets = make(map[string]*Bucket)
+		c.writeQueue = make([]string,0)
 	}
 	socket, err := websocket.Dial(
 		"wss://api.simperium.com:443/sock/websocket",
