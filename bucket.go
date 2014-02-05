@@ -265,7 +265,7 @@ func (b *Bucket) Update(documentId string) {
 */
 
 // Update or create the document in the bucket to contain the new data
-func (b *Bucket) Update(documentId string, data map[string]interface{}) {
+func (b *Bucket) Update(documentId string, data map[string]interface{}) error {
 	var diff *jsondiff.DocumentChange
 	var from bucketItem
 	var ok bool
@@ -278,13 +278,20 @@ func (b *Bucket) Update(documentId string, data map[string]interface{}) {
 	}
 	if err != nil {
 		b.log("simperium.Bucket.UpdateWith.jsd.Diff error: %s", err.Error())
-	} else {
-		diff.Document = documentId
-		diff.ClientId = b.clientId
-		diff.ChangesetId = uuid.New()
-		s, _ := diff.String()
-		b.send<- fmt.Sprintf("c:%s", s)
+		return err
 	}
+	if diff == nil {
+		return nil
+	}
+	diff.Document = documentId
+	diff.ClientId = b.clientId
+	diff.ChangesetId = uuid.New()
+	if true == ok {
+		diff.SourceRevision = from.Version
+	}
+	s, _ := diff.String()
+	b.send<- fmt.Sprintf("c:%s", s)
+	return nil
 }
 
 func (b *Bucket) init() {
