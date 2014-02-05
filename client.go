@@ -162,7 +162,7 @@ func (c *Client) mindSocketWrites() {
 
 	// The write can panic
 	defer func() {
-		// BUG(apokalyptik) We lose a write in this recover. Need to see if we can get a message into c.writeQueue
+		// BUG(apokalyptik) Client -- We may lose a write in this recover. Need to see if we can get a message into c.writeQueue
 		// from here
 		recover()
 	}()
