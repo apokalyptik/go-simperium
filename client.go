@@ -3,6 +3,8 @@ package simperium
 import (
 	"code.google.com/p/go-uuid/uuid"
 	"code.google.com/p/go.net/websocket"
+	"net/url"
+	"crypto/tls"
 	"fmt"
 	"log"
 	"regexp"
@@ -21,6 +23,8 @@ var channelMessage *regexp.Regexp = regexp.MustCompile("^\\d+:")
 type Client struct {
 	clientId string
 	socket   *websocket.Conn
+
+	wssUrl string
 
 	socketError chan error
 	socketRecv  chan string
@@ -259,7 +263,11 @@ func (c *Client) handleSocketReads() {
 	}
 }
 
-func (c *Client) Connect() error {
+func (c *Client) ConnectTo(wssUrl string) error {
+	if c.wssUrl == "" && wssUrl == "" {
+		wssUrl = "wss://api.simperium.com:443/sock/websocket"
+	}
+	c.wssUrl = wssUrl
 	c.clientId = uuid.New()
 	if false == c.initialized {
 		if 0 == c.heartbeat {
@@ -274,10 +282,20 @@ func (c *Client) Connect() error {
 		c.buckets = make(map[string]*Bucket)
 		c.writeQueue = make([]string,0)
 	}
-	socket, err := websocket.Dial(
-		"wss://api.simperium.com:443/sock/websocket",
-		"",
-		"https://github.com/apokalyptik/go-simperium")
+	cfg, err := websocket.NewConfig(c.wssUrl, "https://github.com/apokalyptik/go-simperium")
+	if err != nil {
+		return err
+	}
+	if parsedUrl, err := url.Parse(c.wssUrl); err == nil {
+		if strings.HasSuffix(parsedUrl.Host, ".simperium.com:443") {
+			// For development, different hostname but same ssl cert
+			cfg.TlsConfig = &tls.Config{InsecureSkipVerify: true}
+		}
+	} else {
+		return err
+	}
+	cfg.Header.Add("Host", "api.simperium.com")
+	socket, err := websocket.DialConfig(cfg)
 	if err != nil {
 		return err
 	}
@@ -296,4 +314,8 @@ func (c *Client) Connect() error {
 		}
 	}
 	return nil
+}
+
+func (c *Client) Connect() error {
+	return c.ConnectTo(c.wssUrl)
 }
