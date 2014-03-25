@@ -3,10 +3,10 @@ package simperium
 import (
 	"code.google.com/p/go-uuid/uuid"
 	"code.google.com/p/go.net/websocket"
-	"net/url"
 	"crypto/tls"
 	"fmt"
 	"log"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -37,7 +37,7 @@ type Client struct {
 	channels     int
 	liveChannels int
 
-	writeQueue []string
+	writeQueue  []string
 	connectedAt time.Time
 	lastReadAt  time.Time
 	readTimeout time.Duration
@@ -179,10 +179,10 @@ func (c *Client) mindSocketWrites() {
 		// this same function and there is only one instance of this function running for
 		// this client globally
 		localQueue := c.writeQueue
-		c.writeQueue = make([]string,0)
+		c.writeQueue = make([]string, 0)
 		go func(c *Client, queue []string) {
 			for _, message := range queue {
-				c.socketSend<- message
+				c.socketSend <- message
 			}
 		}(c, localQueue)
 	}
@@ -280,7 +280,7 @@ func (c *Client) ConnectTo(wssUrl string) error {
 		c.socketError = make(chan error)
 		c.connectedClient = make(chan bool)
 		c.buckets = make(map[string]*Bucket)
-		c.writeQueue = make([]string,0)
+		c.writeQueue = make([]string, 0)
 	}
 	cfg, err := websocket.NewConfig(c.wssUrl, "https://github.com/apokalyptik/go-simperium")
 	if err != nil {

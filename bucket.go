@@ -71,7 +71,6 @@ type Bucket struct {
 	ready          ReadyFunc      // Callback
 	notify         NotifyFunc     // Callback
 	notifyInit     NotifyFunc     // Callback
-//	local          LocalFunc      // Callback
 	err            ErrorFunc      // Callback
 	starting       ReadyFunc      // Callback
 	waitingChanges []string       // changes awaiting processing
@@ -83,6 +82,8 @@ type Bucket struct {
 	processLock    sync.Mutex
 	initialized    bool
 	valid          bool
+	pendingChanges map[string]*jsondiff.DocumentChange
+	sendChanges    chan *jsondiff.DocumentChange
 }
 
 func (b *Bucket) handleRecv() {
@@ -126,6 +127,21 @@ func (b *Bucket) handleChanges() {
 			} else {
 				for _, change := range changes {
 					_, ok := b.data[change.Document]
+					if change.Error != 0 {
+						switch change.Error {
+						case 503:
+							for _, ccid := range change.ChangesetIds {
+								if cc, ok := b.pendingChanges[ccid]; ok {
+									b.sendChanges <- cc
+								} else {
+									log.Fatalf("Wanted resend of %s but it was not found to be pending", ccid)
+								}
+							}
+						default:
+							log.Fatal("Unhandled error: %+v", change)
+						}
+						continue
+					}
 
 					if true == ok {
 						n, e := b.jsd.Apply(b.data[change.Document].Data, change)
@@ -142,6 +158,13 @@ func (b *Bucket) handleChanges() {
 							b.updateDocument(change.Document, change.Resultrevision, n)
 						}
 					}
+
+					for _, ccid := range change.ChangesetIds {
+						if _, ok := b.pendingChanges[ccid]; ok {
+							delete(b.pendingChanges, ccid)
+						}
+					}
+
 					if b.notify != nil {
 						if v, ok := b.data[change.Document]; ok {
 							b.notify(b.name, change.Document, v.Data)
@@ -266,6 +289,35 @@ func (b *Bucket) Update(documentId string) {
 }
 */
 
+// Create a goroutine minding outgoing changes for the bucket.  Each gorouting sends
+// exactly one change, then waits for it to be accepete by Simperium. It then accepts
+// one more change (wash, rinse, repeat.)  By default one of these is created.  More
+// of these goroutines means better concurrency, but as the number of these increases
+// there are tradeoffs. First there will be more memory used to keep more changes in
+// memory until they're processed and accepted. Second there will be more resources
+// used watching the pending changes queue for their changes to be removed. Finally
+// You run the risk of being rate limited by the simperium service for having too many
+// pending changes (when this happens simperium sends error:503 and the bucket client
+// will retry until it succeeds, causing these routines to wait longer and block longer)
+// Obviously more is better... until it's not.
+func (b *Bucket) MindOutgoingChanges() {
+	go func() {
+		for {
+			diff := <-b.sendChanges
+			s, _ := diff.String()
+			b.send <- fmt.Sprintf("c:%s", s)
+			for {
+				if _, ok := b.pendingChanges[diff.ChangesetId]; ok == false {
+					break
+				}
+				// TODO: there's probably a more efficient way of doing this... maybe by
+				// wrapping the diff in a struct with a waitgroup member?
+				time.Sleep(1 * time.Millisecond)
+			}
+		}
+	}()
+}
+
 // Update or create the document in the bucket to contain the new data
 func (b *Bucket) Update(documentId string, data map[string]interface{}) error {
 	var diff *jsondiff.DocumentChange
@@ -291,8 +343,8 @@ func (b *Bucket) Update(documentId string, data map[string]interface{}) error {
 	if true == ok {
 		diff.SourceRevision = from.Version
 	}
-	s, _ := diff.String()
-	b.send<- fmt.Sprintf("c:%s", s)
+	b.pendingChanges[diff.ChangesetId] = diff
+	b.sendChanges <- diff
 	return nil
 }
 
@@ -300,6 +352,10 @@ func (b *Bucket) init() {
 	b.isReady.Add(1)
 	b.recvIndex = make(chan string, 1024)
 	b.recvChange = make(chan string, 1024)
+	b.pendingChanges = make(map[string]*jsondiff.DocumentChange)
+
+	b.sendChanges = make(chan *jsondiff.DocumentChange)
+	b.MindOutgoingChanges()
 	b.data = make(map[string]bucketItem)
 	b.jsd = jsondiff.New()
 }
