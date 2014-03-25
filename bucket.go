@@ -43,13 +43,6 @@ type ReadyFunc func(string)
 // func Handler(bucket, documentId string, data map[string]interface{}) {...}
 type NotifyFunc func(string, string, map[string]interface{})
 
-/*
-// The function signature for the OnLocal callback
-//
-// func Handler(bucket, documentId string)  map[string]interface{} {...}
-type LocalFunc func(string, string) map[string]interface{}
-*/
-
 // The function signature for the OnError callback.
 //
 // func Handler(bucket string, err error) {...}
@@ -268,26 +261,11 @@ func (b *Bucket) OnNotifyInit(f NotifyFunc) {
 	b.notifyInit = f
 }
 
-/*
-// Speficy which function to use as a callback for when the bucket needs to know
-// what data a document contains now
-func (b *Bucket) OnLocal(f LocalFunc) {
-	b.local = f
-}
-*/
-
 // Specify whch function to use as a callback for when an error is encountered with
 // bucket operations
 func (b *Bucket) OnError(f ErrorFunc) {
 	b.err = f
 }
-
-/*
-// Tell the bucket that you have new data for the document. The bucket will call
-// your OnLocal handler to retrieve the data
-func (b *Bucket) Update(documentId string) {
-}
-*/
 
 // Create a goroutine minding outgoing changes for the bucket.  Each gorouting sends
 // exactly one change, then waits for it to be accepete by Simperium. It then accepts
