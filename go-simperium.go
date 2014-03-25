@@ -21,7 +21,7 @@ Example Simperium client code:
 
 		simperium := new(simperium.Client)
 		simperium.SetDebug(true)
-		testBucket, err := simperium.Bucket("branches-sexes-619", "test", "73f98dc1d0fa4a539b0693c7e10733dc")
+		testBucket, err := simperium.Bucket(myAppID, myBucketName, myApiKey)
 		if err != nil {
 			log.Fatal(err)
 		}
