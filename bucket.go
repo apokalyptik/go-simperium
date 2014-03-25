@@ -125,11 +125,12 @@ func (b *Bucket) handleChanges() {
 						case 503:
 							for _, ccid := range change.ChangesetIds {
 								if cc, ok := b.pendingChanges[ccid]; ok {
-									b.sendChanges <- cc
+									b.sendDiff(cc)
 								} else {
 									log.Fatalf("Wanted resend of %s but it was not found to be pending", ccid)
 								}
 							}
+							continue
 						default:
 							log.Fatal("Unhandled error: %+v", change)
 						}
@@ -282,8 +283,7 @@ func (b *Bucket) MindOutgoingChanges() {
 	go func() {
 		for {
 			diff := <-b.sendChanges
-			s, _ := diff.String()
-			b.send <- fmt.Sprintf("c:%s", s)
+			b.sendDiff(diff)
 			for {
 				if _, ok := b.pendingChanges[diff.ChangesetId]; ok == false {
 					break
@@ -294,6 +294,11 @@ func (b *Bucket) MindOutgoingChanges() {
 			}
 		}
 	}()
+}
+
+func (b *Bucket) sendDiff(diff *jsondiff.DocumentChange) {
+	s, _ := diff.String()
+	b.send <- fmt.Sprintf("c:%s", s)
 }
 
 // Update or create the document in the bucket to contain the new data
