@@ -4,6 +4,8 @@ package simperium
 
 // BUG(apokalyptik) Bucket -- Need to process options messages which are sent after successful authentication
 
+// BUG(apokalyptik) Bucket --  Need to handle a number of "error": xxx messages that the server could return (some of which aren't "errors", like the duplicate change error)
+
 import (
 	"code.google.com/p/go-uuid/uuid"
 	"encoding/json"
