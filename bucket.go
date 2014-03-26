@@ -199,7 +199,8 @@ func (b *Bucket) handleChanges() {
 				}
 			}
 		} else {
-			time.Sleep(time.Duration(10 * time.Millisecond))
+			// There has to be a less CPU intensive way of handling tight loops like this...
+			time.Sleep(time.Duration(1 * time.Millisecond))
 		}
 	}
 }
