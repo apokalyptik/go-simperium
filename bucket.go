@@ -145,12 +145,18 @@ func (b *Bucket) handleChanges() {
 							case 400: // InvalidId || InvalidSchema
 							case 401: // InvalidPermission
 							case 405: // BadVersion
-							case 409: // DuplicateChange
-							case 412: // EmptyChange
 							case 413: // DocumentTooLarge
 							case 440: // InvalidDiff
 							case 503: // can also be a RaceCondition error :/
 						*/
+						case 409:
+							// DuplicateChange. no-op
+							b.removePendingChanges(&change)
+							continue
+						case 412:
+							// EmptyChange. no-op
+							b.removePendingChanges(&change)
+							continue
 						case 503:
 							for _, ccid := range change.ChangesetIds {
 								if cc, ok := b.pendingChanges[ccid]; ok {
