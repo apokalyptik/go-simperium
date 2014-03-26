@@ -51,34 +51,35 @@ type NotifyFunc func(string, string, map[string]interface{})
 type ErrorFunc func(string, error)
 
 type Bucket struct {
-	app            string         // The application id
-	name           string         // The bucket name
-	token          string         // The user auth token
-	clientId       string         // The client ID
-	isReady        sync.WaitGroup // Whether or not the client is "ready"
-	indexing       bool           // Whether or not we are doing our index sync
-	indexed        bool           // Whether or not we have completed our index sync
-	recv           chan string    // For recieving data from the client
-	recvIndex      chan string    // For internally separating out index responses from the stream
-	recvChange     chan string    // For internally separating out changeset notifications from the stream
-	send           chan string    // For sending commands through the client
-	messages       uint64         // The number of messages pending at the client for this bucket
-	ready          ReadyFunc      // Callback
-	notify         NotifyFunc     // Callback
-	notifyInit     NotifyFunc     // Callback
-	err            ErrorFunc      // Callback
-	starting       ReadyFunc      // Callback
-	waitingChanges []string       // changes awaiting processing
-	changesLock    sync.Mutex
-	data           map[string]bucketItem // Our index
-	debug          bool                  // Whether we're debugging or not
-	jsd            *jsondiff.JsonDiff    // Jsondiff
-	lock           sync.Mutex            // A mutex
-	processLock    sync.Mutex
-	initialized    bool
-	valid          bool
-	pendingChanges map[string]*jsondiff.DocumentChange
-	sendChanges    chan *jsondiff.DocumentChange
+	app                string         // The application id
+	name               string         // The bucket name
+	token              string         // The user auth token
+	clientId           string         // The client ID
+	isReady            sync.WaitGroup // Whether or not the client is "ready"
+	indexing           bool           // Whether or not we are doing our index sync
+	indexed            bool           // Whether or not we have completed our index sync
+	recv               chan string    // For recieving data from the client
+	recvIndex          chan string    // For internally separating out index responses from the stream
+	recvChange         chan string    // For internally separating out changeset notifications from the stream
+	send               chan string    // For sending commands through the client
+	messages           uint64         // The number of messages pending at the client for this bucket
+	ready              ReadyFunc      // Callback
+	notify             NotifyFunc     // Callback
+	notifyInit         NotifyFunc     // Callback
+	err                ErrorFunc      // Callback
+	starting           ReadyFunc      // Callback
+	waitingChanges     []string       // changes awaiting processing
+	changesLock        sync.Mutex
+	data               map[string]bucketItem // Our index
+	debug              bool                  // Whether we're debugging or not
+	jsd                *jsondiff.JsonDiff    // Jsondiff
+	lock               sync.Mutex            // A mutex
+	processLock        sync.Mutex
+	initialized        bool
+	valid              bool
+	pendingChanges     map[string]*jsondiff.DocumentChange
+	pendingChangesLock sync.Mutex
+	sendChanges        chan *jsondiff.DocumentChange
 }
 
 func (b *Bucket) handleRecv() {
@@ -106,6 +107,22 @@ func (b *Bucket) updateDocument(id string, v int, n map[string]interface{}) {
 	b.data[id] = bucketItem{Data: n, Version: v, Id: id}
 }
 
+func (b *Bucket) removePendingChanges(change *jsondiff.DocumentChange) {
+	b.pendingChangesLock.Lock()
+	defer b.pendingChangesLock.Unlock()
+	for _, ccid := range change.ChangesetIds {
+		if _, ok := b.pendingChanges[ccid]; ok {
+			delete(b.pendingChanges, ccid)
+		}
+	}
+}
+
+func (b *Bucket) addPendingChange(diff *jsondiff.DocumentChange) {
+	b.pendingChangesLock.Lock()
+	defer b.pendingChangesLock.Unlock()
+	b.pendingChanges[diff.ChangesetId] = diff
+}
+
 func (b *Bucket) handleChanges() {
 	var m string
 	b.isReady.Wait()
@@ -124,6 +141,16 @@ func (b *Bucket) handleChanges() {
 					_, ok := b.data[change.Document]
 					if change.Error != 0 {
 						switch change.Error {
+						/*
+							case 400: // InvalidId || InvalidSchema
+							case 401: // InvalidPermission
+							case 405: // BadVersion
+							case 409: // DuplicateChange
+							case 412: // EmptyChange
+							case 413: // DocumentTooLarge
+							case 440: // InvalidDiff
+							case 503: // can also be a RaceCondition error :/
+						*/
 						case 503:
 							for _, ccid := range change.ChangesetIds {
 								if cc, ok := b.pendingChanges[ccid]; ok {
@@ -155,12 +182,7 @@ func (b *Bucket) handleChanges() {
 						}
 					}
 
-					for _, ccid := range change.ChangesetIds {
-						if _, ok := b.pendingChanges[ccid]; ok {
-							delete(b.pendingChanges, ccid)
-						}
-					}
-
+					b.removePendingChanges(&change)
 					if b.notify != nil {
 						if v, ok := b.data[change.Document]; ok {
 							b.notify(b.name, change.Document, v.Data)
@@ -328,7 +350,7 @@ func (b *Bucket) Update(documentId string, data map[string]interface{}) error {
 	if true == ok {
 		diff.SourceRevision = from.Version
 	}
-	b.pendingChanges[diff.ChangesetId] = diff
+	b.addPendingChange(diff)
 	b.sendChanges <- diff
 	return nil
 }
